@@ -86,7 +86,7 @@ func (c *CCA) precomputeNeighbors() {
 	}
 }
 
-func (c *CCA) Next() {
+func (c *CCA) Step() {
 	w, h := c.Grid.Rect.Dx(), c.Grid.Rect.Dy()
 	var wg sync.WaitGroup
 	wg.Add(h)
