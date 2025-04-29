@@ -1,9 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"image/color"
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -19,21 +20,14 @@ type CA struct {
 	survive       []int
 }
 
+// NewCA kurallar
+//
+// burn: Ölü bir hücre bu sayıda komşulara sahipse canlanır
+//
+// survive: Canlı bir hücre bu sayıda komşulara sahipse hayatta kalır
 func NewCA(width, height int, burn, survive []int) *CA {
 	current := image.NewGray(image.Rect(0, 0, width, height))
 	next := image.NewGray(image.Rect(0, 0, width, height))
-
-	// Rastgele başlangıç durumu
-	for y := range height {
-		for x := range width {
-			if rand.Float32() < 0.5 {
-				current.SetGray(x, y, color.Gray{Y: 255})
-			} else {
-				current.SetGray(x, y, color.Gray{Y: 0})
-			}
-		}
-	}
-
 	return &CA{
 		width:   width,
 		height:  height,
@@ -100,19 +94,43 @@ func (ca *CA) Step() {
 }
 
 func main() {
-	// Örnek kurallar:
-	// burn: Ölü bir hücre bu sayıda komşuya sahipse canlanır
-	// survive: Canlı bir hücre bu sayıda komşuya sahipse hayatta kalır
-	burn := []int{3}       // Conway'in Yaşam Oyunu gibi
-	survive := []int{2, 3} // Conway'in Yaşam Oyunu gibi
 
-	ca := NewCA(1000, 1000, burn, survive)
+	// B3/S012345678	Life without Death
+	// B3/23	Conway
+
+	burn := []int{3}
+	survive := []int{0, 1, 2, 3, 4, 5, 6, 7, 8}
+
+	ca := NewCA(800, 512, burn, survive)
+	x0 := (ca.width - 10) / 2
+	y0 := (ca.height - 10) / 2
+	randomFillInRect(ca.current, image.Rect(x0, y0, x0+10, y0+10), false)
+
+	imgio.Save("output/ilkKare.png", ca.current, imgio.PNGEncoder())
+
 	now := time.Now()
-	for range 600 {
+	// 600 adım at
+	for range 1200 {
 		ca.Step()
 	}
-	println("Elapsed time:", time.Since(now).Seconds())
+	fmt.Println("Elapsed time:", time.Since(now).Seconds())
 
-	imgio.Save("a.png", ca.current, imgio.PNGEncoder())
+	imgio.Save("output/sonKare.png", ca.current, imgio.PNGEncoder())
+
+}
+
+func randomFillInRect(im *image.Gray, r image.Rectangle, full bool) {
+	if full {
+		r = im.Bounds()
+	}
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			if rand.IntN(2) == 0 {
+				im.SetGray(x, y, color.Gray{Y: 255})
+			} else {
+				im.SetGray(x, y, color.Gray{Y: 0})
+			}
+		}
+	}
 
 }
