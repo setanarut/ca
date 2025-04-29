@@ -1,12 +1,12 @@
 package ca
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"math/rand/v2"
-	"sync"
-
 	"slices"
+	"sync"
 )
 
 var MooreNeighborsOffsets = [8]image.Point{
@@ -14,31 +14,286 @@ var MooreNeighborsOffsets = [8]image.Point{
 	{1, 0}, {-1, 1}, {0, 1}, {1, 1}}
 
 var NeumannNeighborsOffsets = [4]image.Point{
-	{-1, 0}, {0, -1}, {1, 0}, {0, 1}}
-
-type CA struct {
-	W, H          int
-	Current, Next *image.Gray
-	Burn          []int
-	Survive       []int
+	{-1, 0}, {0, -1}, {1, 0}, {0, 1},
 }
 
-// NewCA kurallar
-//
-// burn: Ölü bir hücre bu sayıda komşulara sahipse canlanır
-//
-// survive: Canlı bir hücre bu sayıda komşulara sahipse hayatta kalır
-func NewCA(width, height int, burn, survive []int) *CA {
-	current := image.NewGray(image.Rect(0, 0, width, height))
-	next := image.NewGray(image.Rect(0, 0, width, height))
-	return &CA{
-		W:       width,
-		H:       height,
-		Current: current,
-		Next:    next,
-		Burn:    burn,
-		Survive: survive,
+type Neighborhood int
+
+const Neumann Neighborhood = 0
+const Moore Neighborhood = 1
+
+type RuleType int
+
+const (
+	Cyclic RuleType = iota
+	Dunes
+	LifeLike
+)
+
+type Rule struct {
+	Type             RuleType
+	Range, Threshold int
+	States           uint8
+	Neighborhood     Neighborhood
+	B                []int // Burn
+	S                []int // Survive
+}
+
+func (r *Rule) String() string {
+	var neig string
+	if r.Neighborhood == Moore {
+		neig = "Moore"
+	} else {
+		neig = "Neumann"
 	}
+
+	var ruleType string
+	switch r.Type {
+	case Cyclic:
+		ruleType = "Cyclic"
+	case Dunes:
+		ruleType = "Dunes"
+	}
+
+	return fmt.Sprintf("%s_%d_%d_%d_%v", ruleType, r.Range, r.Threshold, r.States, neig)
+}
+
+// Dunes Cellular Automaton
+type CCA struct {
+	Current, Next *image.Gray
+	Neighbors     [][]int // Used for Cyclic rule
+	Rnd           *rand.Rand
+	Rule          Rule
+}
+
+func NewAutomaton(w, h int, seed uint64, r Rule) *CCA {
+	ca := &CCA{
+		Current: image.NewGray(image.Rect(0, 0, w, h)),
+		Next:    image.NewGray(image.Rect(0, 0, w, h)),
+		Rnd:     rand.New(rand.NewPCG(seed, 0)),
+		Rule:    r,
+	}
+
+	ca.initGrid()
+	return ca
+}
+
+func (c *CCA) initGrid() {
+	switch c.Rule.Type {
+	case Cyclic:
+		c.fillRandomState()
+	case Dunes:
+		c.fillRandomState()
+	case LifeLike:
+		c.RandomFill1Bit()
+	}
+}
+
+func (c *CCA) fillRandomState() {
+	for y := range c.Current.Rect.Dy() {
+		for x := range c.Current.Rect.Dx() {
+			// Generate internal state (0 to States-1)
+			state := uint8(c.Rnd.IntN(int(c.Rule.States)))
+			idx := c.Current.PixOffset(x, y)
+			// Store the internal state directly, we'll map to display value during rendering
+			c.Current.Pix[idx] = state
+		}
+	}
+}
+
+// Get the top-left neighbor value
+func (c *CCA) getTopLeftNeighbor(x, y int) uint8 {
+	w, h := c.Current.Rect.Dx(), c.Current.Rect.Dy()
+	nx := (x - 1 + w) % w
+	ny := (y - 1 + h) % h
+	idx := c.Current.PixOffset(nx, ny)
+	return c.Current.Pix[idx]
+}
+
+// Get the average value of von Neumann neighbors
+func (c *CCA) getVonNeumannAverage(x, y int) uint8 {
+	w, h := c.Current.Rect.Dx(), c.Current.Rect.Dy()
+
+	sum := 0
+	count := 0
+	for _, offset := range NeumannNeighborsOffsets {
+		nx := (x + offset.X + w) % w
+		ny := (y + offset.Y + h) % h
+		idx := c.Current.PixOffset(nx, ny)
+		sum += int(c.Current.Pix[idx])
+		count++
+	}
+	avg := uint8(sum / count)
+	return avg
+}
+
+// Helper function for absolute value
+func Abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+// precomputeNeighbors prepares the neighbor lookup for cyclic rules
+func (c *CCA) precomputeNeighbors() {
+	w, h := c.Current.Rect.Dx(), c.Current.Rect.Dy()
+	c.Neighbors = make([][]int, len(c.Current.Pix))
+	for y := range h {
+		for x := range w {
+			index := c.Current.PixOffset(x, y)
+			dirs := []int{}
+			for dy := -c.Rule.Range; dy <= c.Rule.Range; dy++ {
+				for dx := -c.Rule.Range; dx <= c.Rule.Range; dx++ {
+					if dx == 0 && dy == 0 {
+						continue
+					}
+
+					if c.Rule.Neighborhood != Moore && Abs(dx)+Abs(dy) > c.Rule.Range {
+						continue
+					}
+
+					nx := (x + dx + w) % w
+					ny := (y + dy + h) % h
+					neighborIndex := c.Current.PixOffset(nx, ny)
+					dirs = append(dirs, neighborIndex)
+				}
+			}
+			c.Neighbors[index] = dirs
+		}
+	}
+}
+
+func (c *CCA) Step() {
+	switch c.Rule.Type {
+	case Cyclic:
+		c.cyclicStep()
+	case Dunes:
+		c.dunesStep()
+	case LifeLike:
+		c.lifeStep()
+	}
+}
+
+// cyclicStep implements the original Cyclic rule
+func (c *CCA) cyclicStep() {
+	w, h := c.Current.Rect.Dx(), c.Current.Rect.Dy()
+	var wg sync.WaitGroup
+	wg.Add(h)
+
+	// Precompute neighbors if needed
+	if c.Neighbors == nil {
+		c.precomputeNeighbors()
+	}
+
+	// Update grid to the next generation concurrently, row by row.
+	for y := range h {
+		// Capture current y
+		go func(y int) {
+			defer wg.Done()
+			for x := range w {
+				idx := c.Current.PixOffset(x, y)
+				currentState := c.Current.Pix[idx]
+				targetState := (currentState + 1) % c.Rule.States
+				count := 0
+
+				for _, nIdx := range c.Neighbors[idx] {
+					if c.Current.Pix[nIdx] == targetState {
+						count++
+						if count >= c.Rule.Threshold {
+							break
+						}
+					}
+				}
+
+				if count >= c.Rule.Threshold {
+					c.Next.Pix[idx] = targetState
+				} else {
+					c.Next.Pix[idx] = currentState
+				}
+			}
+		}(y)
+	}
+
+	wg.Wait()
+
+	// Swap grid and buffer
+	c.Current, c.Next = c.Next, c.Current
+}
+
+// dunesStep implements the Dunes rule
+func (c *CCA) dunesStep() {
+	w, h := c.Current.Rect.Dx(), c.Current.Rect.Dy()
+	var wg sync.WaitGroup
+	wg.Add(h)
+
+	// Update grid to the next generation concurrently, row by row
+	for y := range h {
+		// Capture current y
+		go func(y int) {
+			defer wg.Done()
+			for x := range w {
+				idx := c.Current.PixOffset(x, y)
+				currentState := c.Current.Pix[idx]
+
+				// Get top-left neighbor value
+				topLeftValue := c.getTopLeftNeighbor(x, y)
+
+				var newState uint8
+				// If top-left neighbor value > N/2
+				if topLeftValue > c.Rule.States/2 {
+					// Increase current value by 1 (mod N)
+					newState = (currentState + 1) % c.Rule.States
+				} else {
+					// Get average of von Neumann neighbors
+					avgValue := c.getVonNeumannAverage(x, y)
+					// Set to successor of average (mod N)
+					newState = (avgValue + 1) % c.Rule.States
+				}
+
+				c.Next.Pix[idx] = newState
+			}
+		}(y)
+	}
+
+	wg.Wait()
+
+	// Swap grid and buffer
+	c.Current, c.Next = c.Next, c.Current
+}
+
+func (c *CCA) lifeProcessRow(y int, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	for x := range c.Current.Rect.Dx() {
+		neighbors := CountMooreNeighbors(c.Current, x, y)
+		current := c.Current.GrayAt(x, y).Y
+
+		if current == 255 {
+			survives := slices.Contains(c.Rule.S, neighbors)
+			if survives {
+				c.Next.SetGray(x, y, color.Gray{Y: 255})
+			} else {
+				c.Next.SetGray(x, y, color.Gray{Y: 0})
+			}
+		} else {
+			burns := slices.Contains(c.Rule.B, neighbors)
+			if burns {
+				c.Next.SetGray(x, y, color.Gray{Y: 255})
+			} else {
+				c.Next.SetGray(x, y, color.Gray{Y: 0})
+			}
+		}
+	}
+}
+func (c *CCA) lifeStep() {
+	var wg sync.WaitGroup
+	for y := range c.Current.Rect.Dy() {
+		wg.Add(1)
+		go c.lifeProcessRow(y, &wg)
+	}
+	wg.Wait()
+	c.Current, c.Next = c.Next, c.Current
 }
 
 // CountMooreNeighbors returns the number of alive neighbors of a cell in a Moore neighborhood
@@ -56,57 +311,69 @@ func CountMooreNeighbors(im *image.Gray, x, y int) int {
 	return count
 }
 
-// ...existing code...
+// RenderedImage returns a new image.Gray with color-mapped pixel values
+func (c *CCA) RenderedImage() *image.Gray {
+	if c.Rule.Type == LifeLike {
+		return c.Current
+	}
+	ColorMap := make([]uint8, c.Rule.States)
+	// Initialize the color map to evenly spread values across 0-255 range
+	for i := range ColorMap {
+		ColorMap[i] = uint8((i * 255) / (int(c.Rule.States) - 1))
+	}
 
-func (ca *CA) processRow(y int, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	for x := range ca.W {
-		neighbors := CountMooreNeighbors(ca.Current, x, y)
-		current := ca.Current.GrayAt(x, y).Y
-
-		if current == 255 {
-			survives := slices.Contains(ca.Survive, neighbors)
-			if survives {
-				ca.Next.SetGray(x, y, color.Gray{Y: 255})
-			} else {
-				ca.Next.SetGray(x, y, color.Gray{Y: 0})
-			}
-		} else {
-			burns := slices.Contains(ca.Burn, neighbors)
-			if burns {
-				ca.Next.SetGray(x, y, color.Gray{Y: 255})
-			} else {
-				ca.Next.SetGray(x, y, color.Gray{Y: 0})
-			}
+	w, h := c.Next.Rect.Dx(), c.Next.Rect.Dy()
+	img := image.NewGray(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			idx := c.Next.PixOffset(x, y)
+			state := c.Next.Pix[idx]
+			img.Pix[idx] = ColorMap[state]
 		}
 	}
+	return img
 }
 
-func (ca *CA) Step() {
-	var wg sync.WaitGroup
-
-	for y := range ca.H {
-		wg.Add(1)
-		go ca.processRow(y, &wg)
+func CyclicRule(r, t int, s uint8, n Neighborhood) Rule {
+	return Rule{
+		Type:         Cyclic,
+		Range:        r,
+		Threshold:    t,
+		States:       s,
+		Neighborhood: n,
 	}
-
-	wg.Wait()
-	ca.Current, ca.Next = ca.Next, ca.Current
+}
+func DunesRule(states uint8) Rule {
+	return Rule{
+		Type:   Dunes,
+		States: states,
+	}
+}
+func LifeRule(b, s []int) Rule {
+	return Rule{
+		Type:   LifeLike,
+		B:      b,
+		S:      s,
+		States: 2,
+	}
 }
 
-func RandomFillInRect(im *image.Gray, r image.Rectangle, full bool) {
+func (c *CCA) RandomFillInRect(r image.Rectangle, full bool) {
 	if full {
-		r = im.Bounds()
+		r = c.Current.Bounds()
 	}
 	for y := r.Min.Y; y < r.Max.Y; y++ {
 		for x := r.Min.X; x < r.Max.X; x++ {
-			if rand.IntN(2) == 0 {
-				im.SetGray(x, y, color.Gray{Y: 255})
+			if c.Rnd.IntN(2) == 0 {
+				c.Current.SetGray(x, y, color.Gray{Y: 255})
 			} else {
-				im.SetGray(x, y, color.Gray{Y: 0})
+				c.Current.SetGray(x, y, color.Gray{Y: 0})
 			}
 		}
 	}
 
+}
+
+func (ca *CCA) RandomFill1Bit() {
+	ca.RandomFillInRect(ca.Current.Bounds(), true)
 }

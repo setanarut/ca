@@ -1,6 +1,4 @@
 github.com/anthonynsimon/bild v0.14.0 h1:IFRkmKdNdqmexXHfEU7rPlAmdUZ8BDZEGtGHDnGWync=
 github.com/anthonynsimon/bild v0.14.0/go.mod h1:hcvEAyBjTW69qkKJTfpcDQ83sSZHxwOunsseDfeQhUs=
-github.com/setanarut/apng v1.0.5 h1:z/dhJgvzDCmMD1BW4LGUq8vJUCC0stUkbP9t/9KcHHo=
-github.com/setanarut/apng v1.0.5/go.mod h1:vsT7/yC9w9noWN/9Fkv36r1nU/vieKJY5HXe0k+kRD4=
 golang.org/x/image v0.18.0 h1:jGzIakQa/ZXI1I0Fxvaa9W7yP25TqT6cHIHn+6CqvSQ=
 golang.org/x/image v0.18.0/go.mod h1:4yyo5vMFQjVjUcVk4jEQcU9MGy/rulF5WvUILseCM2E=
