@@ -43,10 +43,10 @@ func NewCA(width, height int, burn, survive []int) *CA {
 
 // CountMooreNeighbors returns the number of alive neighbors of a cell in a Moore neighborhood
 // Moore neighborhood includes the 8 surrounding cells
-func CountMooreNeighbors(im *image.Gray, cell image.Point) int {
+func CountMooreNeighbors(im *image.Gray, x, y int) int {
 	count := 0
 	for _, off := range MooreNeighborsOffsets {
-		nx, ny := cell.X+off.X, cell.Y+off.Y
+		nx, ny := x+off.X, y+off.Y
 		if nx >= 0 && nx < im.Bounds().Dx() && ny >= 0 && ny < im.Bounds().Dy() {
 			if im.GrayAt(nx, ny).Y == 255 {
 				count++
