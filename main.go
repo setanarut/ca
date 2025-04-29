@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"math/rand"
 	"sync"
+	"time"
 
 	"slices"
 
@@ -105,11 +106,12 @@ func main() {
 	burn := []int{3}       // Conway'in Yaşam Oyunu gibi
 	survive := []int{2, 3} // Conway'in Yaşam Oyunu gibi
 
-	ca := NewCA(500, 500, burn, survive)
+	ca := NewCA(1000, 1000, burn, survive)
+	now := time.Now()
 	for range 600 {
-		// print(".")
 		ca.Step()
 	}
+	println("Elapsed time:", time.Since(now).Seconds())
 
 	imgio.Save("a.png", ca.current, imgio.PNGEncoder())
 
