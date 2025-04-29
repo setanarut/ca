@@ -9,6 +9,13 @@ import (
 	"slices"
 )
 
+var MooreNeighborsOffsets = [8]image.Point{
+	{-1, -1}, {0, -1}, {1, -1}, {-1, 0},
+	{1, 0}, {-1, 1}, {0, 1}, {1, 1}}
+
+var NeumannNeighborsOffsets = [4]image.Point{
+	{-1, 0}, {0, -1}, {1, 0}, {0, 1}}
+
 type CA struct {
 	W, H          int
 	Current, Next *image.Gray
@@ -34,29 +41,28 @@ func NewCA(width, height int, burn, survive []int) *CA {
 	}
 }
 
-func (ca *CA) countNeighbors(x, y int) int {
+// CountMooreNeighbors returns the number of alive neighbors of a cell in a Moore neighborhood
+// Moore neighborhood includes the 8 surrounding cells
+func CountMooreNeighbors(im *image.Gray, cell image.Point) int {
 	count := 0
-	for dy := -1; dy <= 1; dy++ {
-		for dx := -1; dx <= 1; dx++ {
-			if dx == 0 && dy == 0 {
-				continue
-			}
-			nx, ny := x+dx, y+dy
-			if nx >= 0 && nx < ca.W && ny >= 0 && ny < ca.H {
-				if ca.Current.GrayAt(nx, ny).Y == 255 {
-					count++
-				}
+	for _, off := range MooreNeighborsOffsets {
+		nx, ny := cell.X+off.X, cell.Y+off.Y
+		if nx >= 0 && nx < im.Bounds().Dx() && ny >= 0 && ny < im.Bounds().Dy() {
+			if im.GrayAt(nx, ny).Y == 255 {
+				count++
 			}
 		}
 	}
 	return count
 }
 
+// ...existing code...
+
 func (ca *CA) processRow(y int, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for x := range ca.W {
-		neighbors := ca.countNeighbors(x, y)
+		neighbors := CountMooreNeighbors(ca.Current, x, y)
 		current := ca.Current.GrayAt(x, y).Y
 
 		if current == 255 {
