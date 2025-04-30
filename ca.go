@@ -35,8 +35,8 @@ type Rule struct {
 	Range, Threshold int
 	States           uint8
 	Neighborhood     Neighborhood
-	B                []int // Burn
-	S                []int // Survive
+	Burn             []int // Burn
+	Survive          []int // Survive
 }
 
 func (r *Rule) String() string {
@@ -60,43 +60,42 @@ func (r *Rule) String() string {
 
 // Dunes Cellular Automaton
 type CCA struct {
-	Current, Next *image.Gray
-	Neighbors     [][]int // Used for Cyclic rule
-	Rnd           *rand.Rand
-	Rule          Rule
+	Current, Next      *image.Gray
+	Neighbors          [][]int // Used for Cyclic rule
+	Rnd                *rand.Rand
+	Rule               Rule
+	LifeLikeAgeEnabled bool
+	LifeLikeMaxAge     int
 }
 
 func NewAutomaton(w, h int, seed uint64, r Rule) *CCA {
 	ca := &CCA{
-		Current: image.NewGray(image.Rect(0, 0, w, h)),
-		Next:    image.NewGray(image.Rect(0, 0, w, h)),
-		Rnd:     rand.New(rand.NewPCG(seed, 0)),
-		Rule:    r,
+		Current:        image.NewGray(image.Rect(0, 0, w, h)),
+		Next:           image.NewGray(image.Rect(0, 0, w, h)),
+		Rnd:            rand.New(rand.NewPCG(seed, 0)),
+		Rule:           r,
+		LifeLikeMaxAge: 64,
 	}
 
-	ca.initGrid()
+	// ca.Init()
 	return ca
 }
 
-func (c *CCA) initGrid() {
+func (c *CCA) Init() {
 	switch c.Rule.Type {
 	case Cyclic:
-		c.fillRandomState()
+		c.FillWithRandomStates()
 	case Dunes:
-		c.fillRandomState()
+		c.FillWithRandomStates()
 	case LifeLike:
-		c.RandomFill1Bit()
+		c.FillWithRandom_0_255()
 	}
 }
 
-func (c *CCA) fillRandomState() {
+func (c *CCA) FillWithRandomStates() {
 	for y := range c.Current.Rect.Dy() {
 		for x := range c.Current.Rect.Dx() {
-			// Generate internal state (0 to States-1)
-			state := uint8(c.Rnd.IntN(int(c.Rule.States)))
-			idx := c.Current.PixOffset(x, y)
-			// Store the internal state directly, we'll map to display value during rendering
-			c.Current.Pix[idx] = state
+			c.Current.SetGray(x, y, color.Gray{uint8(c.Rnd.IntN(int(c.Rule.States)))})
 		}
 	}
 }
@@ -269,31 +268,28 @@ func (c *CCA) lifeProcessRow(y int, wg *sync.WaitGroup) {
 		neighbors := CountMooreNeighbors(c.Current, x, y)
 		current := c.Current.GrayAt(x, y).Y
 
-		if current == 255 {
-			survives := slices.Contains(c.Rule.S, neighbors)
-			if survives {
-				c.Next.SetGray(x, y, color.Gray{Y: 255})
+		if current > 0 {
+			if slices.Contains(c.Rule.Survive, neighbors) {
+				if c.LifeLikeAgeEnabled {
+					// Yaşayan hücrelerin rengi kademeli olarak azalır
+					newColor := uint8(max(0, int(current)-(255/c.LifeLikeMaxAge)))
+					c.Next.SetGray(x, y, color.Gray{Y: newColor})
+				} else {
+					c.Next.SetGray(x, y, color.Gray{Y: 255})
+				}
+
 			} else {
 				c.Next.SetGray(x, y, color.Gray{Y: 0})
 			}
 		} else {
-			burns := slices.Contains(c.Rule.B, neighbors)
-			if burns {
+			if slices.Contains(c.Rule.Burn, neighbors) {
+				// Yeni doğan hücreler tam parlaklıkta başlar
 				c.Next.SetGray(x, y, color.Gray{Y: 255})
 			} else {
 				c.Next.SetGray(x, y, color.Gray{Y: 0})
 			}
 		}
 	}
-}
-func (c *CCA) lifeStep() {
-	var wg sync.WaitGroup
-	for y := range c.Current.Rect.Dy() {
-		wg.Add(1)
-		go c.lifeProcessRow(y, &wg)
-	}
-	wg.Wait()
-	c.Current, c.Next = c.Next, c.Current
 }
 
 // CountMooreNeighbors returns the number of alive neighbors of a cell in a Moore neighborhood
@@ -303,12 +299,22 @@ func CountMooreNeighbors(im *image.Gray, x, y int) int {
 	for _, off := range MooreNeighborsOffsets {
 		nx, ny := x+off.X, y+off.Y
 		if nx >= 0 && nx < im.Bounds().Dx() && ny >= 0 && ny < im.Bounds().Dy() {
-			if im.GrayAt(nx, ny).Y == 255 {
+			if im.GrayAt(nx, ny).Y > 0 {
 				count++
 			}
 		}
 	}
 	return count
+}
+
+func (c *CCA) lifeStep() {
+	var wg sync.WaitGroup
+	for y := range c.Current.Rect.Dy() {
+		wg.Add(1)
+		go c.lifeProcessRow(y, &wg)
+	}
+	wg.Wait()
+	c.Current, c.Next = c.Next, c.Current
 }
 
 // RenderedImage returns a new image.Gray with color-mapped pixel values
@@ -351,10 +357,10 @@ func DunesRule(states uint8) Rule {
 }
 func LifeRule(b, s []int) Rule {
 	return Rule{
-		Type:   LifeLike,
-		B:      b,
-		S:      s,
-		States: 2,
+		Type:    LifeLike,
+		Burn:    b,
+		Survive: s,
+		States:  2,
 	}
 }
 
@@ -374,6 +380,20 @@ func (c *CCA) RandomFillInRect(r image.Rectangle, full bool) {
 
 }
 
-func (ca *CCA) RandomFill1Bit() {
+func (ca *CCA) FillWithRandom_0_255() {
 	ca.RandomFillInRect(ca.Current.Bounds(), true)
+}
+
+func B(nums ...int) []int {
+	return nums
+}
+
+func S(nums ...int) []int {
+	return nums
+}
+
+func Birth(im *image.Gray, x, y int) {
+	for _, off := range MooreNeighborsOffsets {
+		im.SetGray(x+off.X, y+off.Y, color.Gray{Y: 255})
+	}
 }
