@@ -7,6 +7,8 @@ import (
 	"math/rand/v2"
 	"slices"
 	"sync"
+
+	"github.com/mazznoer/colorgrad"
 )
 
 var MooreNeighborsOffsets = [8]image.Point{
@@ -335,6 +337,25 @@ func (c *CCA) RenderedImage() *image.Gray {
 			idx := c.Next.PixOffset(x, y)
 			state := c.Next.Pix[idx]
 			img.Pix[idx] = ColorMap[state]
+		}
+	}
+	return img
+}
+
+// RenderedImage returns a new image.Gray with color-mapped pixel values
+func (c *CCA) GradientMap(g colorgrad.Gradient) image.Image {
+	if c.Rule.Type == LifeLike {
+		return c.Current
+	}
+	palet := g.Colors(uint(c.Rule.States))
+
+	w, h := c.Next.Rect.Dx(), c.Next.Rect.Dy()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			idx := c.Next.PixOffset(x, y)
+			state := int(c.Next.Pix[idx])
+			img.Set(x, y, palet[state])
 		}
 	}
 	return img
